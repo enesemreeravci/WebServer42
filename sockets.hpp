@@ -7,5 +7,8 @@
 #include <unistd.h>
 #include <cstdio>
 #include <netinet/in.h>
+#include <cstring>
+#include <fcntl.h>
+#include <poll.h>
 
 #endif
