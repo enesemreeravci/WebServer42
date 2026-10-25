@@ -10,6 +10,19 @@ int main()
         perror("socket");
         return 1;
     }
+    
+    // enable SO_REUSEADDR before bind()
+    // allows the server to reuse an address and port after restarting 
+    // even if previous connections are still in TIME_WAIT
+    // helps avoid address already in use errors
+    // doesnt override another server actively listening on the same port
+    int opt = 1;
+    if(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    {
+        perror("setsockopt");
+        close(server_fd);
+        return 1;
+    }
 
     std::cout
         << "Socket created successfully!\n"
@@ -65,90 +78,119 @@ int main()
         return 1;
     }
 
-    // pollfd describes which FD and events we want to monitor.
-    struct pollfd pfd;
-    pfd.fd = server_fd;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
+    // with vector we will be able to manage multiple clients to connect to our server
+    // we can add new clients dynamically and remove them when they disconnect
+    std::vector<struct pollfd> fds;
+    
+    struct pollfd server_pfd;
+    server_pfd.fd = server_fd;
+    server_pfd.events = POLLIN;
+    server_pfd.revents = 0;
 
-    // poll() waits until the listening socket has an event.
-    int ready = poll(&pfd, 1, -1);
-
-    if (ready == -1)
+    fds.push_back(server_pfd);
+    
+    //  initilaze the vector before entering the loop
+    
+    while(true)
     {
-        perror("poll");
-        close(server_fd);
-        return 1;
-    }
-
-    if (ready > 0 && (pfd.revents & POLLIN))
-    {
-        // accept() returns a new FD for the connected client.
-        int client_fd = accept(server_fd, NULL, NULL);
-
-        if (client_fd == -1)
+        // poll() waits until the listening socket has an event.
+        int ready = poll(&fds[0], fds.size(), -1);
+                    // pointer to the first pollfd element, number of descriptors to monitor, wait indefinitetl for an event
+        
+        if (ready == -1)
         {
-            perror("accept");
+            perror("poll");
             close(server_fd);
             return 1;
         }
-
-        std::cout
-            << "Client connected successfully!\n"
-            << "Client's fd = " << client_fd << std::endl;
-
-        // recv() receives up to sizeof(buffer) bytes.
-        // Its return value is the number of bytes actually received.
-        char buffer[100];
-        ssize_t bytes = recv(client_fd, buffer, sizeof(buffer), 0);
-
-        if (bytes < 0)
+        
+        for(unsigned int i = 0; i < fds.size(); i++)
         {
-            perror("Recv failed");
-            close(client_fd);
-            close(server_fd);
-            return 1;
-        }
-        else if (bytes == 0)
-        {
-            std::cout << "Client closed its sending side" << std::endl;
-        }
-        else
-        {
-            std::cout << "Message from client: ";
-            std::cout.write(buffer, bytes);
-            std::cout << "\n";
-
-            const char *message = "Hello from Webserver";
-
-            // send() attempts to send bytes through the connected socket.
-            ssize_t bytes_message = send(
-                client_fd, message, strlen(message), 0
-            );
-
-            if (bytes_message > 0)
+            if (ready > 0 && (fds[i].revents & POLLIN))
             {
-                std::cout << "Server response: ";
-                std::cout.write(message, bytes_message);
-                std::cout << "\n";
-            }
-            else if (bytes_message == 0)
-            {
-                std::cout << "bytes_message = 0" << std::endl;
-            }
-            else
-            {
-                perror("Send failed");
-                close(client_fd);
-                close(server_fd);
-                return 1;
+                // 
+                if(fds[i].fd == server_fd)
+                {
+                    // accept() returns a new FD for the connected client.
+                    int client_fd = accept(server_fd, NULL, NULL);
+                    
+                    
+                    if (client_fd == -1)
+                    {
+                        perror("accept");
+                        continue; // instead of closing the server we want to still continue to receive connection from other clients
+                    }
+                    // for new client , creating a pollfd structure
+
+                    pollfd client_pfd;
+                    client_pfd.fd = client_fd;
+                    client_pfd.events = POLLIN;
+                    client_pfd.revents = 0;
+
+                    fds.push_back(client_pfd);
+                    std::cout << "New client successfully connected, FD: " << client_fd << std::endl;
+                }
+
+                else if(fds[i].fd != server_fd)
+                {
+                    
+                    char buffer[100];
+                    ssize_t bytes = recv(fds[i].fd, buffer, sizeof(buffer), 0);
+                    
+                    if (bytes <= 0)
+                    {
+                        if(bytes == 0)
+                            std::cout << "CLient has disconnected, FD: " << fds[i].fd << std::endl;
+                        else
+                            perror("recv error");
+                        
+                        close(fds[i].fd); // close the socket
+                        fds.erase(fds.begin() + i); // remove from the vector
+                        i--; // decrease by 1 cause we deleted one element
+                    }
+                    else
+                    {
+                        std::cout << "Client FD's: "<< fds[i].fd << std::endl;
+                        std::cout << "Message from client: "; 
+                        std::cout.write(buffer, bytes);
+                        std::cout << "\n";
+                        
+                        const char *message = "Hello from Webserver";
+                        
+                        // send() attempts to send bytes through the connected socket.
+                        ssize_t bytes_message = send(
+                            fds[i].fd, message, strlen(message), 0
+                        );
+                        
+                        if (bytes_message > 0)
+                        {
+                            std::cout << "Server response: ";
+                            std::cout.write(message, bytes_message);
+                            std::cout << "\n";
+                        }
+                        else if (bytes_message == 0)
+                        {
+                            std::cout << "bytes_message = 0" << std::endl;
+                        }
+                        else
+                        {
+                            perror("Send failed");
+                            close(fds[i].fd);
+                            fds.erase(fds.begin() + i);
+                            i--;
+                        }
+                    }
+                    // Close the accepted client socket after communication.
+                    //close(client_fd);
+                    // uncommented because conenction must be open.
+                    // later delete here completely!
             }
         }
-
-        // Close the accepted client socket after communication.
-        close(client_fd);
     }
+            // recv() receives up to sizeof(buffer) bytes.
+            // Its return value is the number of bytes actually received.
 
+    }        
     // Close the listening socket before exiting.
     close(server_fd);
     return 0;
