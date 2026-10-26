@@ -1,80 +1,12 @@
-
-#include "sockets.hpp"
+#include "Socket.hpp"
 
 int main()
 {
-    // socket() creates a socket and returns its file descriptor.
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd == -1)
+
+    Socket server;
+    if(!server.initializeSocket(8080))
     {
-        perror("socket");
-        return 1;
-    }
-    
-    // enable SO_REUSEADDR before bind()
-    // allows the server to reuse an address and port after restarting 
-    // even if previous connections are still in TIME_WAIT
-    // helps avoid address already in use errors
-    // doesnt override another server actively listening on the same port
-    int opt = 1;
-    if(setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
-    {
-        perror("setsockopt");
-        close(server_fd);
-        return 1;
-    }
-
-    std::cout
-        << "Socket created successfully!\n"
-        << "Socket's fd = " << server_fd << std::endl;
-
-    // sockaddr_in stores an IPv4 address and port.
-    // htons() converts a 16-bit value to network byte order.
-    // htonl() converts a 32-bit value to network byte order.
-    struct sockaddr_in addr = {};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(8080);
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    // bind() expects a pointer to the generic sockaddr type.
-    struct sockaddr* generic_addr = reinterpret_cast<struct sockaddr *>(&addr);
-    std::cout << "Address successfully initialized" << std::endl;
-
-    // bind() assigns an IP address and port to the socket.
-    if (bind(server_fd, generic_addr, sizeof(addr)) < 0)
-    {
-        perror("Bind failed");
-        close(server_fd);
-        return 1;
-    }
-    std::cout << "Socket bound to 127.0.0.1:8080" << std::endl;
-
-    // listen() makes the socket ready for incoming connections.
-    // 5 is the requested backlog size.
-    if (listen(server_fd, 5) < 0)
-    {
-        perror("Listen failed");
-        close(server_fd);
-        return 1;
-    }
-    std::cout << "Server is listening on port 8080" << std::endl;
-
-    // fcntl(F_GETFL) gets the current file status flags.
-    int flags = fcntl(server_fd, F_GETFL);
-    if (flags == -1)
-    {
-        perror("fcntl F_GETFL");
-        close(server_fd);
-        return 1;
-    }
-
-    // fcntl(F_SETFL) updates the flags.
-    // O_NONBLOCK prevents socket operations from waiting for I/O.
-    int result = fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
-    if (result == -1)
-    {
-        perror("fcntl F_SETFL");
-        close(server_fd);
+        std::cerr << "Server initialiaztion failed" << std::endl;
         return 1;
     }
 
@@ -83,7 +15,7 @@ int main()
     std::vector<struct pollfd> fds;
     
     struct pollfd server_pfd;
-    server_pfd.fd = server_fd;
+    server_pfd.fd = server.getFd();
     server_pfd.events = POLLIN;
     server_pfd.revents = 0;
 
@@ -100,7 +32,6 @@ int main()
         if (ready == -1)
         {
             perror("poll");
-            close(server_fd);
             return 1;
         }
         
@@ -109,10 +40,10 @@ int main()
             if (ready > 0 && (fds[i].revents & POLLIN))
             {
                 // 
-                if(fds[i].fd == server_fd)
+                if(fds[i].fd == server.getFd())
                 {
                     // accept() returns a new FD for the connected client.
-                    int client_fd = accept(server_fd, NULL, NULL);
+                    int client_fd = accept(server.getFd(), NULL, NULL);
                     
                     
                     if (client_fd == -1)
@@ -131,7 +62,7 @@ int main()
                     std::cout << "New client successfully connected, FD: " << client_fd << std::endl;
                 }
 
-                else if(fds[i].fd != server_fd)
+                else if(fds[i].fd != server.getFd())
                 {
                     
                     char buffer[100];
@@ -192,6 +123,7 @@ int main()
 
     }        
     // Close the listening socket before exiting.
-    close(server_fd);
+    // close(server.getFd());
+    // we handle this case in Socker class. remove here later.
     return 0;
 }
