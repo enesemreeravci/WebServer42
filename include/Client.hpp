@@ -17,7 +17,7 @@ class Client
         Client(int fd);
         ~Client();
         void appendInput(const char *data, size_t length);
-        void setOutPut(const std::string& response);
+        void setOutput(const std::string& response);
         void advanceSent(size_t bytes);
 
         int getClientFd() const;

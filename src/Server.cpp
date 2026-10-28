@@ -30,14 +30,17 @@ void Server::acceptClient()
 {
     // for new client it will return a new FD
     int client_fd = accept(_socket.getFd(), NULL, NULL);
+
     
     if(client_fd == -1)
     {
         if(errno != EAGAIN && errno != EWOULDBLOCK)
-            perror("Accept");
+        perror("Accept");
         return;
     }
-   
+    // if accept() successfull run here
+    Client client_obj(client_fd);
+
     int flags = fcntl(client_fd, F_GETFL);
     if(flags == -1)
     {
@@ -60,7 +63,15 @@ void Server::acceptClient()
             client_pfd.fd = client_fd;
             client_pfd.events = POLLIN;
             client_pfd.revents = 0;
+            
+            // std::make_pair(client_fd, client_obj);
+            bool inserted = _clients.insert(std::make_pair(client_fd, client_obj)).second;
 
+            if(inserted == false)
+            {
+                close(client_fd);
+                return;
+            }
             _fds.push_back(client_pfd);
 
             std::cout << "New client has successfully connected, FD is: " << client_fd << std::endl;
@@ -103,8 +114,10 @@ bool Server::readClient(size_t index)
 
 void Server::removeClient(size_t index)
 {
-    close(_fds[index].fd);
-    _fds.erase(_fds.begin() + index);
+    int client_fd = _fds[index].fd; 
+    _clients.erase(client_fd);      // removes the client's stored data and state
+    close(_fds[index].fd); // relases the os's socker descriptor
+    _fds.erase(_fds.begin() + index); // stops our event loop from monitoring that FD
 }
 
 void Server::run()
