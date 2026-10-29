@@ -64,9 +64,11 @@ void Server::acceptClient()
             client_pfd.events = POLLIN;
             client_pfd.revents = 0;
             
-            // std::make_pair(client_fd, client_obj);
+            // std::make_pair creates a pair (first = client_id, second_client_obj)
+            // insert() returns another pair
+            // we are storing successufuy created pair in our map which is _clients
             bool inserted = _clients.insert(std::make_pair(client_fd, client_obj)).second;
-
+            // if key is already existed , no new entry was insreted and close the fd
             if(inserted == false)
             {
                 close(client_fd);
@@ -85,13 +87,23 @@ bool Server::readClient(size_t index)
 {
     char buffer[1024];
     
+    int client_fd = _fds[index].fd; // gets the client's fd from _fds
+    std::map<int, Client>::iterator it; 
+
+    it = _clients.find(client_fd); // it points to the matching map entry if exists
+    if(it == _clients.end()) // it it is not found return false
+        return false;
+
     ssize_t bytesReceived = recv(_fds[index].fd, buffer, sizeof(buffer), 0);
     
     if (bytesReceived > 0)
     {
         std::cout << "Client's FD is: " << _fds[index].fd << std::endl;
         std::cout << "Message from client: ";
-        std::cout.write(buffer, bytesReceived) << std::endl; 
+        // it->first gives us client's FD(int)
+        // it->second gives us exisiting Client object
+        it->second.appendInput(buffer, bytesReceived);
+        // std::cout.write(buffer, bytesReceived) << std::endl; 
         return true;
     }
     else if(bytesReceived == 0)
@@ -118,6 +130,49 @@ void Server::removeClient(size_t index)
     _clients.erase(client_fd);      // removes the client's stored data and state
     close(_fds[index].fd); // relases the os's socker descriptor
     _fds.erase(_fds.begin() + index); // stops our event loop from monitoring that FD
+}
+
+bool Server::writeClient(size_t index)
+{
+    int client_fd = _fds[index].fd;
+
+    std::map<int, Client>::iterator it;
+    
+    it = _clients.find(client_fd);
+    if(it == _clients.end())
+        return false;
+
+    Client& client = it->second;
+    if(client.hasPendingOutput() == false)
+        return true;
+    const std::string& response = client.getOutputBuffer();
+    size_t bytesSent = client.getBytesSent();
+
+    size_t remainingBytes;
+    remainingBytes = response.size() - bytesSent;
+
+    ssize_t bytesWritten;
+    bytesWritten = send(client_fd, response.c_str() + bytesSent, remainingBytes, 0);
+    
+    if(bytesWritten > 0)
+    {
+        client.advanceSent(bytesWritten);
+        return true;
+    }
+    else if (bytesWritten == 0)
+    {
+       // std::cout << "do nothing";
+        return true;
+    }
+    else 
+    {
+        if(errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            return true; 
+        perror("send");
+        return false;
+    }
+    
+
 }
 
 void Server::run()

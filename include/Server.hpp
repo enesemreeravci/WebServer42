@@ -19,6 +19,7 @@ class Server
         void acceptClient();
         bool readClient(size_t index); // index for finding which client we want to read from, we are saying "read from the client stored at index 3"
         void removeClient(size_t index);
+        bool writeClient(size_t index);
 
     public:
         Server();

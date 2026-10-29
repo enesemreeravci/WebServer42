@@ -24,6 +24,7 @@ class Client
         const std::string& getOutputBuffer() const;
         size_t getBytesSent() const;
         bool hasPendingOutput() const;
+        const std::string& getInputBuffer() const;
 };
 
 #endif
