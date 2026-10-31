@@ -100,10 +100,33 @@ bool Server::readClient(size_t index)
     {
         std::cout << "Client's FD is: " << _fds[index].fd << std::endl;
         std::cout << "Message from client: ";
+        std::cout.write(buffer, bytesReceived);
+        std::cout << std::endl;
         // it->first gives us client's FD(int)
         // it->second gives us exisiting Client object
-        it->second.appendInput(buffer, bytesReceived);
-        // std::cout.write(buffer, bytesReceived) << std::endl; 
+        it->second.appendInput(buffer, bytesReceived); // accumulates recevied bytes from multiple recv() calls
+        const std::string& input =  it->second.getInputBuffer(); // get the accumalted inputbuffer
+        size_t position = input.find("\r\n\r\n"); // search for the end of HTTP headers
+        if(position != std::string::npos && !it->second.isResponseQueued()) // did we find the end of the http headears?
+        {
+            std::cout << "HTTP header terminator found" << std::endl;
+            const std::string fixedHttpResponse =
+                        "HTTP/1.1 200 OK\r\n"
+                        "Content-Type: text/plain\r\n"
+                        "Content-Length: 5\r\n"
+                        "Connection: close\r\n"
+                        "\r\n"
+                        "Hello";
+            if(!queueResponse(index, fixedHttpResponse))
+            {
+                std::cerr << "Could not queue response for FD " << client_fd << std::endl;
+            }
+            else
+            {
+                it->second.markResponseQueued();
+            }
+        
+        }
         return true;
     }
     else if(bytesReceived == 0)
@@ -127,9 +150,30 @@ bool Server::readClient(size_t index)
 void Server::removeClient(size_t index)
 {
     int client_fd = _fds[index].fd; 
+    std::cout << "Server closing client FD: " << client_fd << std::endl;
     _clients.erase(client_fd);      // removes the client's stored data and state
     close(_fds[index].fd); // relases the os's socker descriptor
     _fds.erase(_fds.begin() + index); // stops our event loop from monitoring that FD
+}
+
+bool Server::queueResponse(size_t index, const std::string& response)
+{
+    int client_fd  = _fds[index].fd;
+
+    std::map<int, Client>::iterator it;
+    it = _clients.find(client_fd);
+    if(it == _clients.end()) return false;
+
+    Client& client = it->second;
+
+    if(client.hasPendingOutput() == true)
+        return false;
+
+    if(response.empty())
+        return false;
+    client.setOutput(response);
+    _fds[index].events |= POLLOUT; // enabling POLLOUT
+    return true;
 }
 
 bool Server::writeClient(size_t index)
@@ -151,12 +195,17 @@ bool Server::writeClient(size_t index)
     size_t remainingBytes;
     remainingBytes = response.size() - bytesSent;
 
-    ssize_t bytesWritten;
-    bytesWritten = send(client_fd, response.c_str() + bytesSent, remainingBytes, 0);
+    ssize_t bytesWritten;                                                   //prevent sigpipe 
+    bytesWritten = send(client_fd, response.c_str() + bytesSent, remainingBytes, MSG_NOSIGNAL);
     
     if(bytesWritten > 0)
     {
         client.advanceSent(bytesWritten);
+        if(!client.hasPendingOutput()) // if it returns false. all response bytes have been sent
+        {
+            _fds[index].events &= ~POLLOUT; // if no bytes remain, events &= ~pollout stops monitoring this cleitn for write readiness
+            return false;
+        }  
         return true;
     }
     else if (bytesWritten == 0)
@@ -195,7 +244,8 @@ void Server::run()
         for(size_t i = 0; i < monitoredCount; )
         {
             bool shouldRemoveClient = false;
-
+            
+            // pollin meeans socket is ready for a read operation
             if(_fds[i].revents & POLLIN)
             {
                 std::cout << "FD " << _fds[i].fd
@@ -206,7 +256,18 @@ void Server::run()
                 else if(!readClient(i))
                     shouldRemoveClient = true;
             }
+            if(_fds[i].revents & POLLOUT)
+            {
+                std::cout << "FD " <<  _fds[i].fd << " is ready to write" << std::endl;
+                
+                if(_fds[i].fd != _socket.getFd() && !shouldRemoveClient)
+                {
+                    if(writeClient(i) == false)
+                        shouldRemoveClient = true;
+                }
+            }
             // POLLIN - A read operation can proceed
+            // POLLOUT - writing is now possible
             // POLLHUP - A hangup has occurred
             // POLLERR - A socket error occurred
             // POLLNVAL - THe file descripto is invalid

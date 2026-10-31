@@ -11,7 +11,7 @@ class Client
         std::string _inputBuffer; // stores recevied request bytes
         std::string _outputBuffer; // stores  response bytes waiting to be sent
         size_t _bytesSent; // tracks how much of the response has been transmitted
-
+        bool _responseQueued;
 
     public:
         Client(int fd);
@@ -25,6 +25,8 @@ class Client
         size_t getBytesSent() const;
         bool hasPendingOutput() const;
         const std::string& getInputBuffer() const;
+        bool isResponseQueued() const;
+        void markResponseQueued();
 };
 
 #endif
