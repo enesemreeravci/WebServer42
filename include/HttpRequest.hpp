@@ -29,6 +29,9 @@ class HttpRequest
         void setMethod(const std::string& method);
         void setTarget(const std::string& target);
         void setVersion(const std::string& version);
+
+        //functions
+        void addHeader(const std::string& name, const std::string& value);
 };
 
 #endif
