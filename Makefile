@@ -7,7 +7,9 @@ INCLUDES = -Iinclude
 SRCS = src/main.cpp \
        src/Socket.cpp \
        src/Server.cpp \
-       src/Client.cpp
+       src/Client.cpp \
+	   src/HttpRequest.cpp \
+	   src/HttpParser.cpp
 
 OBJS = $(SRCS:.cpp=.o)
 
