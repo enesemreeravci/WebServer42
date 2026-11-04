@@ -12,28 +12,42 @@ int main()
     HttpParser parser;
 
 
-    const std::string rawData = "GET /index.html HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    std::string headerLine = "Host:    localhost:8080";
+    const std::string rawData =
+        "GET /index.html HTTP/1.1\r\n"
+        "Host: localhost:8080\r\n"
+        "Accept: text/html\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+
+    const std::string rawData2 =
+    "GET / HTTP/1.1\r\n"
+    "Host: localhost:8080\r\n"
+    "InvalidHeaderWithoutColon\r\n"
+    "Connection: close\r\n"
+    "\r\n";
+    // std::string headerLine = "Host:    localhost:8080";
     
-    if(parser.parseRequestLine(rawData, request))
-    {
-        std::cout << "Method: " << request.getMethod() << std::endl;
-        std::cout << "Target: " << request.getTarget() << std::endl;
-        std::cout << "Version: " << request.getVersion() << std::endl;
-    }
+    // if(parser.parseRequestLine(rawData, request))
+    // {
+    //     std::cout << "Method: " << request.getMethod() << std::endl;
+    //     std::cout << "Target: " << request.getTarget() << std::endl;
+    //     std::cout << "Version: " << request.getVersion() << std::endl;
+    // }
 
-    const std::map<std::string, std::string>& headers = request.getHeaders();
-
+    
     std::map<std::string, std::string>::const_iterator it;
-    if(parser.parseHeader(headerLine, request))
+    if(parser.parseHeaders(rawData2, request))
     {
-        request.getHeaders();
-        it = headers.find("Host");
-        if(it != headers.end())
+        const std::map<std::string, std::string>& headers = request.getHeaders();
+        for(it = headers.begin(); it != headers.end(); ++it)
         {
-            std::cout << "Key: " << it->first << std::endl;
-            std::cout << "Value: " << it->second << std::endl; 
+            std::cout << "Key: " << it->first << ", " << "Value: " << it->second << std::endl; 
         }
+
+    }
+    else
+    {
+        std::cout << "Failed to parse  headers" << std::endl;
     }
     
     // Server server;
