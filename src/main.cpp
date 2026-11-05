@@ -50,13 +50,13 @@ int main()
         std::cout << "Failed to parse  headers" << std::endl;
     }
     
-    // Server server;
-    // if(!server.initializeServer(8080))
-    // {
-    //     std::cerr << "Server initialiaztion failed" << std::endl;
-    //     return 1;
-    // }
+    Server server;
+    if(!server.initializeServer(8080))
+    {
+        std::cerr << "Server initialiaztion failed" << std::endl;
+        return 1;
+    }
 
-    // server.run();
+    server.run();
     return 0;
 }

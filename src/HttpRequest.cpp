@@ -27,6 +27,11 @@ void HttpRequest::setVersion(const std::string& version)
     _version = version;
 }
 
+void HttpRequest::setBody(const std::string& body)
+{
+    _body = body;
+}
+
 // Host: localhost8080 
 void HttpRequest::addHeader(const std::string& name, const std::string& value)
 {

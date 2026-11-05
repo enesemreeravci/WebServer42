@@ -23,7 +23,7 @@ class HttpParser
         bool parseRequestLine(const std::string& rawData, HttpRequest& request);
         bool parseHeader(const std::string& headerLine, HttpRequest& request); // processes one header
         bool parseHeaders(const std::string& rawData, HttpRequest& request); // processes multiple headers
-
+        // bool parseBody(const std::string& rawData, HttpRequest& request);
 
         
 };

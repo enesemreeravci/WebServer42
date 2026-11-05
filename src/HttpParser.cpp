@@ -121,8 +121,15 @@ bool HttpParser::parseHeaders(const std::string& rawData, HttpRequest& request)
 
     size_t headersEnd = rawData.find("\r\n\r\n"); 
     if(headersEnd == std::string::npos)
-    return false;
+        return false;
     
+    // means there are no header lines to parse
+    // return true because the empty header section has been parsed successfully
+    if(headersEnd == requestLineEnd)
+        return true;
+    
+    if(headersStart > headersEnd)
+        return false;
     while (headersStart < headersEnd)
     {
         size_t nextHeaderEnd = rawData.find("\r\n", headersStart); 
@@ -140,6 +147,16 @@ bool HttpParser::parseHeaders(const std::string& rawData, HttpRequest& request)
         headersStart = nextHeaderEnd + 2;
     }
     return true;
-    
-    
 }                       
+
+// bool HttpParser::parseBody(const std::string& rawData, HttpRequest& request)
+// {
+//     size_t headersEnd = rawData.find("\r\n\r\n");
+//     if(headersEnd == std::string::npos)
+//         return false;
+    
+//     size_t bodyStart = headersEnd + 4;
+
+//     size_t availableBodyBytes = rawData.size() - bodyStart;
+//         return true;
+// }
