@@ -1,4 +1,4 @@
-#include "../include/Client.hpp"
+#include "../../include/network/Client.hpp"
 
 Client::Client(int fd) : _fd(fd), _bytesSent(0), _responseQueued(false) {}
 

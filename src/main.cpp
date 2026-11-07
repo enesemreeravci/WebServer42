@@ -1,6 +1,6 @@
-#include "Server.hpp"
-#include "HttpParser.hpp"
-#include "HttpRequest.hpp"
+#include "../include/network/Server.hpp"
+#include "../include/http/HttpRequest.hpp"
+#include "../include/http/HttpParser.hpp"
 #include <iostream>
 
 int main()

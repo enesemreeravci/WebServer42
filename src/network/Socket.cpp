@@ -1,4 +1,4 @@
-#include "../include/Socket.hpp"
+#include "../../include/network/Socket.hpp"
 
 // we set the _fd -1 to prevent conflict.
 Socket::Socket() : _fd(-1) {}
