@@ -58,14 +58,18 @@ int main()
     else if(c_pid == 0)
     {
         close(pipefd[1]);
+        if(dup2(pipefd[0], STDIN_FILENO) == -1)
+        {
+            close(pipefd[0]);          
+            _exit(1);
+        }
         char buffer[100];
-        ssize_t bytesRead = read(pipefd[0], buffer, sizeof(buffer) -1 );
+        ssize_t bytesRead = read(STDIN_FILENO, buffer, sizeof(buffer) -1 );
         if(bytesRead > 0)
         {
             buffer[bytesRead] = '\0';
             std::cout << buffer << std::endl;
         }
-        close(pipefd[0]);          
         _exit(0);
     }
 
