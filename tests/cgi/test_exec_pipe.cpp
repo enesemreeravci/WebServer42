@@ -4,7 +4,7 @@
 #include <sys/wait.h>
 #include <stdio.h>
 
-
+// to recall the concept, not real cgi program implementation
 int main()
 {
 
@@ -48,19 +48,28 @@ int main()
     else if(c_pid > 0)
     {
         close(outputPipe[1]); // parent only reads;
+        std::string cgiOutput;
         char buffer[100];
-        
-        ssize_t bytesRead = read(outputPipe[0], buffer, sizeof(buffer) - 1);
-        if(bytesRead == -1)
-        {
-            perror("read failed");
-        }
-        if(bytesRead > 0)
-        {
-            buffer[bytesRead] = '\0';
-            std::cout << buffer << std::endl;
-        }
 
+        
+        while (true)
+        {
+            ssize_t bytesRead = read(outputPipe[0], buffer, sizeof(buffer));
+            if(bytesRead > 0)
+            {
+                cgiOutput.append(buffer, bytesRead);
+            }            
+            if(bytesRead == 0)
+                break;
+            if(bytesRead == -1)
+            {
+                perror("read failed");
+                break;
+            }
+        }
+        std::cout << "CGI Output: " << cgiOutput;
+        std::cout << "Total bytes: " << cgiOutput.size() << std::endl;
+        
         close(outputPipe[0]); 
         int status;
         pid_t  result = waitpid(c_pid, &status, 0);
