@@ -6,6 +6,15 @@
 #include <unistd.h>
 #include <iostream>
 #include <stdio.h>
+#include <fcntl.h>
+#include <signal.h>
+
+enum ReapResult
+{
+    REAP_ERROR,
+    REAP_RUNNING,
+    REAP_FINISHED
+};
 
 class CgiHandler
 {
@@ -19,12 +28,16 @@ class CgiHandler
         CgiHandler();
         ~CgiHandler();
 
+        // prevent copying because cgihandler owns file descriptors
+        CgiHandler(const CgiHandler& other);
+        CgiHandler& operator=(const CgiHandler& other);
 
         bool createPipes(int fd1[2], int fd2[2]);
         bool startProcess(const std::string& executablePath);
-        bool reapChild();
-
-
+        ReapResult reapChild();
+        bool setNonBlocking(int fd);
+        bool terminateChild();
+        bool isRunning() const;
         // getters
         pid_t getPid() const;
         int getInputFd() const;

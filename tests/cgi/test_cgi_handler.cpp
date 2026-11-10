@@ -32,13 +32,18 @@ int main()
         std::cout << "Bytes Received: " << bytesRead << std::endl;
     }
     std::cout << "Child's PID: " << obj.getPid() << std::endl;
-    if (obj.reapChild() == false)
+    ReapResult result = obj.reapChild();
+    if (result == REAP_RUNNING)
     {
-        std::cout << "Child not reaped yet (or waitpid error)" << std::endl;
+        std::cout << "Child is still running" << std::endl;
     }
-    else
+    else if(result == REAP_FINISHED)
     {
         std::cout << "Child was reaped" << std::endl;
+    }
+    else if(result == REAP_ERROR)
+    {
+        std::cout << "Error while reaping child" << std::endl;
     }
     return 0;
 }

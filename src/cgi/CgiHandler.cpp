@@ -49,10 +49,10 @@ bool CgiHandler::createPipes(int fd1[2], int fd2[2])
 }
 
 
-bool CgiHandler::reapChild()
+ReapResult CgiHandler::reapChild()
 {
     if(_pid <= 0)
-        return false;
+        return REAP_ERROR;
 
     int status;
     pid_t result = waitpid(_pid, &status, WNOHANG);
@@ -60,18 +60,51 @@ bool CgiHandler::reapChild()
     {
         std::cout << "Child termination status collected" << std::endl;
         _pid = -1;
-        return true;
+        if(WIFEXITED(status) == true)
+            std::cout << "Child exit code: " << WEXITSTATUS(status) << std::endl;
+        else if(WIFSIGNALED(status))
+            std::cout << "Terminated by signal" << std::endl;
+
+        return REAP_FINISHED;
     }
     else if(result == 0)
     {
         std::cout << "Child is still running" << std::endl;
-        return false;
+        return REAP_RUNNING;
     }
     else 
     {
         std::cout << "Error" << std::endl;
-        return false;
+        return REAP_ERROR;
     }
+}
+
+bool CgiHandler::terminateChild()
+{
+    if(_pid <= 0)
+        return false;
+
+    if(kill(_pid , SIGTERM) == -1) // standart graceful shutdown request
+        return false;
+    return true;
+}
+
+bool CgiHandler::setNonBlocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL); // get flags
+    if(flags == -1)
+        return false;
+    int result = fcntl(fd, F_SETFL, flags | O_NONBLOCK); // old flags + nonblock
+    if(result == -1)
+        return false;
+    return true;
+}
+
+bool CgiHandler::isRunning() const
+{
+    if(_pid > 0)
+        return true;    
+    return false;
 }
 
 bool CgiHandler::startProcess(const std::string& executablePath)
@@ -93,10 +126,11 @@ bool CgiHandler::startProcess(const std::string& executablePath)
         close(fd2[0]);
         return false;
     }
-    else if(c_pid == 0)
+    else if(c_pid == 0) // child
     {
         close(fd1[1]); // because child doesnt write to pipe 1
         close(fd2[0]);  // because child doesnt read from pipe 2
+      
         if(dup2(fd1[0], STDIN_FILENO) == -1)
         {
             perror("dup2 failed");
@@ -136,6 +170,14 @@ bool CgiHandler::startProcess(const std::string& executablePath)
 
         _inputFd = fd1[1]; // parent writes the request body
         _outputFd = fd2[0]; // parents read cgi output
+        if (!setNonBlocking(_inputFd) || !setNonBlocking(_outputFd))
+        {
+            close(_inputFd);
+            close(_outputFd);
+            _inputFd = -1;
+            _outputFd = -1;
+            return false;
+        }
         std::cout << "Printed form [parent] process " << std::endl;
     }
     return true;
