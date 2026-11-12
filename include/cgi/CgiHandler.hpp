@@ -23,7 +23,7 @@ class CgiHandler
 
         int _inputFd; // parent's write end for sending the htpp request body to the cgi child
         int _outputFd; // parent's read end for receiving the cgi childs' output
-
+        bool _cancelRequested;
     public:
         CgiHandler();
         ~CgiHandler();
@@ -38,6 +38,7 @@ class CgiHandler
         bool setNonBlocking(int fd);
         bool terminateChild();
         bool isRunning() const;
+        bool isCancelRequested() const;
         // getters
         pid_t getPid() const;
         int getInputFd() const;

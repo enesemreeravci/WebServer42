@@ -5,6 +5,7 @@ CgiHandler::CgiHandler()
     _pid = -1; // meaning no child process has been started
     _inputFd = -1;
     _outputFd = -1;
+    _cancelRequested = false;
 }
 
 
@@ -86,7 +87,15 @@ bool CgiHandler::terminateChild()
 
     if(kill(_pid , SIGTERM) == -1) // standart graceful shutdown request
         return false;
+    _cancelRequested = true;
     return true;
+}
+
+bool CgiHandler::isCancelRequested() const
+{
+    if(_cancelRequested == true)
+        return true;
+    return false;
 }
 
 bool CgiHandler::setNonBlocking(int fd)
