@@ -1,4 +1,5 @@
 #include "../../include/network/Server.hpp"
+#include "../../include/cgi/CgiHandler.hpp"
 
 Server::Server() {}
 Server::~Server() 
@@ -91,7 +92,7 @@ bool Server::readClient(size_t index)
     std::map<int, Client>::iterator it; 
 
     it = _clients.find(client_fd); // it points to the matching map entry if exists
-    if(it == _clients.end()) // it it is not found return false
+    if(it == _clients.end()) // if it is not found return false
         return false;
 
     ssize_t bytesReceived = recv(_fds[index].fd, buffer, sizeof(buffer), 0);
@@ -224,20 +225,122 @@ bool Server::writeClient(size_t index)
 
 }
 
+// add a cgi fd to both type and _fds
+// so the event loop knows its type and can monitor it
+void Server::registerCgiFd(int fd, FdType type)
+{
+    _cgiFds[fd] = type;
+
+    struct pollfd cgi;
+    cgi.fd = fd;
+    if(type == CGI_INPUT)
+        cgi.events = POLLOUT;
+    else if(type == CGI_OUTPUT)
+        cgi.events = POLLIN;
+    cgi.revents = 0;
+
+    _fds.push_back(cgi);
+}
+
+void Server::unregisterCgiFd(int fd)
+{
+    _cgiFds.erase(fd);
+
+    std::vector<struct pollfd>::iterator it = _fds.begin();
+    while(it != _fds.end())
+    {
+        if(it->fd == fd)
+        {
+            _fds.erase(it);
+            break;
+        }
+        it++;
+    }
+}
+
+void Server::checkPendingCgi()
+{
+    std::vector<CgiHandler*>::iterator it = _pendingReap.begin(); 
+
+    while (it != _pendingReap.end())
+    {
+        CgiHandler* cgi = *it;
+        ReapResult res = cgi->reapChild();
+        if(res == REAP_FINISHED)
+        {
+            delete cgi;
+            it =  _pendingReap.erase(it);
+            std::cout << "Pending CGI child reaped" << std::endl;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+    
+}
+
+void Server::removeCgi(int clientFd)
+{
+    std::map<int, CgiHandler*>::iterator it =  _activeCgi.find(clientFd);
+    if(it == _activeCgi.end())
+        return;
+
+    CgiHandler* cgi = it->second;
+    if(cgi == NULL)
+        return;
+    
+    
+    int inputfd = cgi->getInputFd();
+    int outputfd = cgi->getOutputFd();
+
+    if(inputfd != -1)
+        unregisterCgiFd(inputfd);
+    if(outputfd != -1)
+        unregisterCgiFd(outputfd);
+
+    ReapResult res = cgi->reapChild();
+    if(res == REAP_RUNNING)
+    {
+        std::cout << "CGI child still running" << std::endl;
+        if(cgi->isCancelRequested() == false)
+        {
+            if(cgi->terminateChild() == false)
+                perror("SIGTERM failed");
+        }
+        _pendingReap.push_back(cgi);
+        _activeCgi.erase(it);
+        return;
+        
+    }
+    else if(res == REAP_FINISHED)
+    {
+        std::cout << "CGI child successfully reaped" << std::endl;
+        delete cgi;
+        _activeCgi.erase(it);
+    }
+    else if(res == REAP_ERROR)
+    {
+        std::cout << "CGI child reap error" << std::endl; 
+    }
+    
+}
+
 void Server::run()
 {
     while(true)
     {
-        int readyFds = poll(&_fds[0], _fds.size(), -1);
-
+        int readyFds = poll(&_fds[0], _fds.size(), 100);
+        
         if(readyFds == -1)
         {
             if(errno == EINTR)
-                continue;
+            continue;
             perror("poll");
             return;
         }
-
+        
+        checkPendingCgi();
         // Number of FDs that existed when poll() returned
         size_t monitoredCount = _fds.size();
 
@@ -251,19 +354,46 @@ void Server::run()
                 std::cout << "FD " << _fds[i].fd
                           << " is ready for reading" << std::endl;
 
-                if(_fds[i].fd == _socket.getFd())
+                if(_fds[i].fd == _socket.getFd()) // listening socket
+                {
                     acceptClient();
-                else if(!readClient(i))
-                    shouldRemoveClient = true;
+                    
+                }
+                else if(_clients.find(_fds[i].fd) != _clients.end()) // known client
+                {
+                    if(!readClient(i))
+                        shouldRemoveClient = true;
+                }
+                else if (_cgiFds.find(_fds[i].fd) != _cgiFds.end()) 
+                {
+                    if(_cgiFds[_fds[i].fd] == CGI_OUTPUT)
+                    {
+                        std::cout << "CGI output ready to read" << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "Unexpected CGI pipe type" << std::endl;
+                    }
+                }
+                else // unknown fd
+                {
+                    std::cout << "Unknown FD" << std::endl;
+                }
             }
             if(_fds[i].revents & POLLOUT)
             {
                 std::cout << "FD " <<  _fds[i].fd << " is ready to write" << std::endl;
                 
-                if(_fds[i].fd != _socket.getFd() && !shouldRemoveClient)
+
+                if(_clients.find(_fds[i].fd) != _clients.end() && !shouldRemoveClient)
                 {
                     if(writeClient(i) == false)
                         shouldRemoveClient = true;
+                }
+                else if(_cgiFds.find(_fds[i].fd) != _cgiFds.end())
+                {
+                    if(_cgiFds[_fds[i].fd] == CGI_INPUT)
+                        std::cout << "CGI input ready  for writing" << std::endl;
                 }
             }
             // POLLIN - A read operation can proceed
@@ -273,7 +403,7 @@ void Server::run()
             // POLLNVAL - THe file descripto is invalid
             // we inspect revents because multiple flags can appear together
             // it handles client disconnection and error events
-            if(_fds[i].fd != _socket.getFd() && 
+            if(_clients.find(_fds[i].fd) != _clients.end() && 
             (_fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) && 
             !(_fds[i].revents & POLLIN))
             {
