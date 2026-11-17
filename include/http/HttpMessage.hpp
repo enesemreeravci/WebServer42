@@ -6,7 +6,7 @@
 /*   By: akonstan <akonstan@student.42warsaw.pl>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/11/17 15:12:34 by akonstan          #+#    #+#             */
-/*   Updated: 2026/11/17 17:38:27 by akonstan         ###   ########.fr       */
+/*   Updated: 2026/11/17 21:54:28 by akonstan         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -31,6 +31,6 @@ class HttpMessage{
 		const std::map<std::string, std::string>& getHeader() const;
         const std::string& getBody() const;
 
-		bool std::set(std::string& rawData);
+		virtual int set(std::string& rawData) = 0;
 };
 #endif

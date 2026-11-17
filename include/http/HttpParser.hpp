@@ -1,10 +1,25 @@
 #ifndef HTTP_PARSER_HPP
-#define HTTP_PARSER_HPP
+# define HTTP_PARSER_HPP
 
-#include "HttpRequest.hpp"
-#include <string>
+# include <string>
+# include "HttpRequest.hpp"
+# include "HttpResponse.hpp"
 
-class HttpParser
+class HttpParser{
+    private:
+        size_t str_pos;
+
+        bool isValidMethod(const std::string& method) const;
+        bool isValidTarget(const std::string& target) const;
+        bool isValidVersion(const std::string& version) const;
+
+    public:
+        HttpParser();
+        ~HttpParser();
+        static bool parseRequestLine(const std::string& rawData, HttpRequest& request);
+};
+
+/*class HttpParser
 {
     private:
         bool isValidMethod(const std::string& method) const;
@@ -26,6 +41,6 @@ class HttpParser
         // bool parseBody(const std::string& rawData, HttpRequest& request);
 
         
-};
+};*/
 
 #endif

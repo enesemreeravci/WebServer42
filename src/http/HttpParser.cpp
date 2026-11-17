@@ -8,8 +8,7 @@ requestLine:
 "GET /index.html HTTP/1.1"
 */
 
-bool HttpParser::isValidMethod(const std::string& method) const
-{
+bool HttpParser::isValidMethod(const std::string& method) const{
     return (method == "GET" || method == "POST" || method == "DELETE");
 }
 
@@ -55,6 +54,25 @@ bool HttpParser::isValidRequest(const std::string& method,
                                 const std::string& version) const
 {
     return (isValidMethod(method) && isValidTarget(target) && isValidVersion(version));   
+}
+
+HttpParser::HttpParser()
+    : str_pos(0)
+{}
+
+HttpParser::~HttpParser(){
+
+}
+
+bool HttpParser::parseRequestLine(const std::string& rawData, HttpRequest& req){
+    size_t end = rawData.find("\r\n");
+    
+    if(end == std::string::npos)
+        return false;
+
+    for (size_t cur = 0; cur < end; ++cur){
+        
+    }
 }
 
 bool HttpParser::parseRequestLine(const std::string& rawData, HttpRequest& request)

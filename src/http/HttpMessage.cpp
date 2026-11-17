@@ -6,7 +6,7 @@
 /*   By: akonstan <akonstan@student.42warsaw.pl>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/11/17 15:48:14 by akonstan          #+#    #+#             */
-/*   Updated: 2026/11/17 17:40:26 by akonstan         ###   ########.fr       */
+/*   Updated: 2026/11/17 21:56:00 by akonstan         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -48,7 +48,5 @@ const std::string& HttpMessage::getBody() const{
 }
 
 int HttpMessage::set(std::string& rawData){
-	if (rawData == NULL || rawData = "")
-		return -1;
 	
 }
