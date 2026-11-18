@@ -2,6 +2,9 @@
 # define HTTP_PARSER_HPP
 
 # include <string>
+# include <algorithm>
+# include <cctype>
+# include <exception>
 # include "HttpRequest.hpp"
 # include "HttpResponse.hpp"
 
@@ -13,10 +16,17 @@ class HttpParser{
         bool isValidTarget(const std::string& target) const;
         bool isValidVersion(const std::string& version) const;
 
+        bool extractMethod(const std::string& rawData, HttpRequest&  req);
+        bool extractTarget(const std::string& rawData, HttpRequest& req);
+        bool extractVersion(const std::string& rawData, HttpRequest& req);
+
+        std::string& extractKey(const std::string& rawData);
+        list<std::string>& exctractValue(const std::string& rawData);
     public:
         HttpParser();
         ~HttpParser();
-        static bool parseRequestLine(const std::string& rawData, HttpRequest& request);
+        bool parseRequestLine(const std::string& rawData, HttpRequest& req);
+        bool parseHeader(const std::string& rawData, HttpMessage& msg);
 };
 
 /*class HttpParser

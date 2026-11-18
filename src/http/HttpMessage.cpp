@@ -6,7 +6,7 @@
 /*   By: akonstan <akonstan@student.42warsaw.pl>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/11/17 15:48:14 by akonstan          #+#    #+#             */
-/*   Updated: 2026/11/17 21:56:00 by akonstan         ###   ########.fr       */
+/*   Updated: 2026/11/18 16:19:37 by akonstan         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -40,13 +40,13 @@ const std::string& HttpMessage::getStartLine() const{
 }
 
 const std::map<std::string, std::string>& HttpMessage::getHeader() const{
-	return _headers;
+	return _header;
 }
 
 const std::string& HttpMessage::getBody() const{
 	return _body;
 }
 
-int HttpMessage::set(std::string& rawData){
-	
+void HttpMessage::addHeader(const std::string& key, const list<std::string>& value){
+    _headers[key] = value;
 }

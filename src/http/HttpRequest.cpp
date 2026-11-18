@@ -32,8 +32,6 @@ void HttpRequest::setBody(const std::string& body)
     _body = body;
 }
 
-// Host: localhost8080 
-void HttpRequest::addHeader(const std::string& name, const std::string& value)
-{
-    _headers[name] = value;
+void HttpRequest::setStartLine(){
+	_start_line = _method + " " + _target + " " + _version;
 }

@@ -29,7 +29,7 @@ class HttpRequest: public HttpMessage{
 		void setBody(const std::string& body);
 
 		//functions
-		void addHeader(const std::string& name, const std::string& value);
+		void setStartLine() override;
 };
 
 #endif
