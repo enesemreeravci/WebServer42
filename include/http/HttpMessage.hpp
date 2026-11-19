@@ -6,7 +6,7 @@
 /*   By: akonstan <akonstan@student.42warsaw.pl>    +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2026/11/17 15:12:34 by akonstan          #+#    #+#             */
-/*   Updated: 2026/11/18 16:19:51 by akonstan         ###   ########.fr       */
+/*   Updated: 2026/11/19 18:17:52 by akonstan         ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
@@ -19,7 +19,7 @@
 class HttpMessage{
 	protected:
 		std::string	_start_line;
-		std::map<std::string, list<std::string> > _header;
+		std::map<std::string, std::list<std::string> > _header;
 		std::string	_body;
 		
 		HttpMessage();
@@ -33,6 +33,6 @@ class HttpMessage{
         const std::string& getBody() const;
 
 		virtual void setStartLine() = 0;
-		void addHeader(const std::string& key, const list<std::string>& value);
+		void addHeader(const std::string& key, const std::list<std::string>& value);
 };
 #endif
