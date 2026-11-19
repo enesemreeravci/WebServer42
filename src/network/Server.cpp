@@ -1,86 +1,96 @@
 #include "../../include/network/Server.hpp"
 #include "../../include/cgi/CgiHandler.hpp"
+#include "../../include/utils/Utils.hpp"
 
 Server::Server() {}
 Server::~Server() 
 {
     for(size_t i = 0; i < _fds.size(); i++)
     {
-        if(_fds[i].fd != _socket.getFd())
-            close(_fds[i].fd);
+        close(_fds[i].fd);
     }
 }
 
-bool Server::initializeServer(int port)
+
+bool Server::setupListeninSocket(int port)
 {
-    if(!_socket.initializeSocket(port))
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
         return false;
 
-    struct pollfd server_pfd;
-    server_pfd.fd = _socket.getFd();
-    server_pfd.events = POLLIN;
-    server_pfd.revents = 0;
+    int opt = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    {
+        close(fd);
+        return false;
+    }
 
-    _fds.push_back(server_pfd);
+    struct sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY); //or INADDR_LOOPBACK
 
+    if (bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0 ||
+        listen(fd, SOMAXCONN) < 0 ||
+        (!Utils::setNonBlocking(fd)))
+    {
+        close(fd);
+        return false;
+    }
+
+    _listenFds.push_back(fd);
+
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    _fds.push_back(pfd);
     return true;
 }
 
-// handle incoming connections
-void Server::acceptClient()
-{
-    // for new client it will return a new FD
-    int client_fd = accept(_socket.getFd(), NULL, NULL);
 
-    
-    if(client_fd == -1)
+bool Server::isListeninSocket(int fd) const
+{
+    for(size_t i = 0; i < _listenFds.size(); i++)
     {
-        if(errno != EAGAIN && errno != EWOULDBLOCK)
-        perror("Accept");
+        if(_listenFds[i] == fd)
+            return true;
+    }
+    return false;
+}
+
+// handle incoming connections
+void Server::acceptClient(int listenFd)
+{
+    int client_fd = accept(listenFd, NULL, NULL);
+    if (client_fd == -1)
+    {
+        if (errno != EAGAIN && errno != EWOULDBLOCK)
+            perror("Accept");
         return;
     }
-    // if accept() successfull run here
-    Client client_obj(client_fd);
 
-    int flags = fcntl(client_fd, F_GETFL);
-    if(flags == -1)
+    if (!Utils::setNonBlocking(client_fd))
     {
-        perror("fcntl() F_GETFL");
         close(client_fd);
         return;
     }
-    else
-    {
-        int result = fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
-        if(result == -1)
-        {
-            perror("fcntl() F_SETFL");
-            close(client_fd);
-            return;
-        }
-        else
-        {
-            pollfd client_pfd;
-            client_pfd.fd = client_fd;
-            client_pfd.events = POLLIN;
-            client_pfd.revents = 0;
-            
-            // std::make_pair creates a pair (first = client_id, second_client_obj)
-            // insert() returns another pair
-            // we are storing successufuy created pair in our map which is _clients
-            bool inserted = _clients.insert(std::make_pair(client_fd, client_obj)).second;
-            // if key is already existed , no new entry was insreted and close the fd
-            if(inserted == false)
-            {
-                close(client_fd);
-                return;
-            }
-            _fds.push_back(client_pfd);
 
-            std::cout << "New client has successfully connected, FD is: " << client_fd << std::endl;
-        }
+    Client client_obj(client_fd);
+    if (!_clients.insert(std::make_pair(client_fd, client_obj)).second)
+    {
+        close(client_fd);
+        return;
     }
 
+    pollfd client_pfd;
+    client_pfd.fd = client_fd;
+    client_pfd.events = POLLIN;
+    client_pfd.revents = 0;
+    _fds.push_back(client_pfd);
+
+    std::cout << "New client has successfully connected, FD is: " << client_fd << std::endl;
 }
 
 //handle existing clients   
@@ -108,9 +118,30 @@ bool Server::readClient(size_t index)
         it->second.appendInput(buffer, bytesReceived); // accumulates recevied bytes from multiple recv() calls
         const std::string& input =  it->second.getInputBuffer(); // get the accumalted inputbuffer
         size_t position = input.find("\r\n\r\n"); // search for the end of HTTP headers
-        if(position != std::string::npos && !it->second.isResponseQueued()) // did we find the end of the http headears?
+        if (position != std::string::npos && !it->second.isResponseQueued())
         {
             std::cout << "HTTP header terminator found" << std::endl;
+
+            // GEÇİCİ CGI TEST BLOĞU
+            if (input.find("GET /cgi-bin/test.py") != std::string::npos && it->second.getCgi() == NULL)
+            {
+                std::vector<std::string> envVars;
+                envVars.push_back("REQUEST_METHOD=GET");
+                envVars.push_back("QUERY_STRING=user=enes");
+                envVars.push_back("SERVER_PROTOCOL=HTTP/1.1");
+                envVars.push_back("GATEWAY_INTERFACE=CGI/1.1");
+
+                // Not: startProcess içinde chdir("./www/cgi-bin") yapıldığı için
+                // python3'e script adı olarak "test.py" veya tam yol verilmeli.
+               std::cout << "[DEBUG] CGI bloguna girildi!" << std::endl;
+                    if (startCgiForClient(client_fd, "www/cgi-bin/test.py", "/usr/bin/python3", envVars, ""))
+                    {
+                        return true;
+                    }
+                    std::cout << "[DEBUG] startCgiForClient FALSE dondu!" << std::endl;
+            
+            }
+
             const std::string fixedHttpResponse =
                         "HTTP/1.1 200 OK\r\n"
                         "Content-Type: text/plain\r\n"
@@ -118,7 +149,7 @@ bool Server::readClient(size_t index)
                         "Connection: close\r\n"
                         "\r\n"
                         "Hello";
-            if(!queueResponse(index, fixedHttpResponse))
+            if (!queueResponse(index, fixedHttpResponse))
             {
                 std::cerr << "Could not queue response for FD " << client_fd << std::endl;
             }
@@ -126,7 +157,6 @@ bool Server::readClient(size_t index)
             {
                 it->second.markResponseQueued();
             }
-        
         }
         return true;
     }
@@ -152,9 +182,20 @@ void Server::removeClient(size_t index)
 {
     int client_fd = _fds[index].fd; 
     std::cout << "Server closing client FD: " << client_fd << std::endl;
+
+    removeCgi(client_fd); // it will remove cgi client
     _clients.erase(client_fd);      // removes the client's stored data and state
     close(_fds[index].fd); // relases the os's socker descriptor
-    _fds.erase(_fds.begin() + index); // stops our event loop from monitoring that FD
+    
+    for(size_t i = 0; i < _fds.size(); ++i)
+    {
+        if(_fds[i].fd == client_fd)
+        {
+            _fds.erase(_fds.begin() + i); // stops our event loop from monitoring that FD
+            break;
+        }    
+
+    }
 }
 
 bool Server::queueResponse(size_t index, const std::string& response)
@@ -205,7 +246,8 @@ bool Server::writeClient(size_t index)
         if(!client.hasPendingOutput()) // if it returns false. all response bytes have been sent
         {
             _fds[index].events &= ~POLLOUT; // if no bytes remain, events &= ~pollout stops monitoring this cleitn for write readiness
-            return false;
+            client.reset();
+            return true; // keep the connection open 
         }  
         return true;
     }
@@ -227,15 +269,15 @@ bool Server::writeClient(size_t index)
 
 // add a cgi fd to both type and _fds
 // so the event loop knows its type and can monitor it
-void Server::registerCgiFd(int fd, FdType type)
+void Server::registerCgiFd(int fd, int clientFd, bool isInput)
 {
-    _cgiFds[fd] = type;
+    _cgiToClientFd[fd] = clientFd;
 
     struct pollfd cgi;
     cgi.fd = fd;
-    if(type == CGI_INPUT)
+    if(isInput)
         cgi.events = POLLOUT;
-    else if(type == CGI_OUTPUT)
+    else 
         cgi.events = POLLIN;
     cgi.revents = 0;
 
@@ -244,7 +286,7 @@ void Server::registerCgiFd(int fd, FdType type)
 
 void Server::unregisterCgiFd(int fd)
 {
-    _cgiFds.erase(fd);
+    _cgiToClientFd.erase(fd);
 
     std::vector<struct pollfd>::iterator it = _fds.begin();
     while(it != _fds.end())
@@ -258,72 +300,189 @@ void Server::unregisterCgiFd(int fd)
     }
 }
 
-void Server::checkPendingCgi()
+void Server::enableClientPollout(int clientFd)
 {
-    std::vector<CgiHandler*>::iterator it = _pendingReap.begin(); 
-
-    while (it != _pendingReap.end())
+    for(size_t i = 0; i < _fds.size(); ++i)
     {
-        CgiHandler* cgi = *it;
-        ReapResult res = cgi->reapChild();
-        if(res == REAP_FINISHED)
+        if(_fds[i].fd == clientFd)
         {
-            delete cgi;
-            it =  _pendingReap.erase(it);
-            std::cout << "Pending CGI child reaped" << std::endl;
-        }
-        else
-        {
-            ++it;
+            _fds[i].events |= POLLOUT;
+            break;
         }
     }
-    
 }
+
+void Server::checkPendingCgi()
+{
+    std::map<int, Client>::iterator it;
+    
+    for(it = _clients.begin(); it != _clients.end(); ++it)
+    {
+        int clientFd = it->first;
+        Client& client = it->second;
+        CgiHandler* cgi = client.getCgi();
+        if(cgi == NULL)
+            continue;
+        
+        if(cgi->isTimedOut(10)) // timeout check, 10 sec
+        {
+            if(cgi->getInputFd() != -1)
+                removePollFd(cgi->getInputFd());
+            if(cgi->getOutputFd() != -1)
+                removePollFd(cgi->getOutputFd());
+            
+            cgi->terminateChild();
+            delete cgi;
+            client.setCgi(NULL);
+
+            std::string timeoutReap = 
+                "HTTP/1.1 504 Gateway Timeout\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 19\r\n\r\n"
+                "504 Gateway Timeout";
+
+            client.setOutput(timeoutReap);
+            client.markResponseQueued();
+            enableClientPollout(clientFd);
+            continue;
+        }
+
+        // if output pipe has closed, EOF
+        if(cgi->getOutputFd() == -1)
+        {
+            ReapResult status = cgi->reapChild();
+            if(status == REAP_FINISHED || status == REAP_ERROR)
+            {
+                std::string cgiOutput = cgi->getOutputBuffer();
+                delete cgi;
+                client.setCgi(NULL);
+
+                std::string response;
+                if(status == REAP_ERROR)
+                {
+                    response =
+                    "HTTP/1.1 502 Bad Gateway\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: 15\r\n\r\n"
+                    "502 Bad Gateway";
+                }
+                else
+                {
+                    response = "HTTP/1.1 200 OK\r\nConnection: close\r\n" + cgiOutput;
+                }
+            
+                client.setOutput(response);
+                client.markResponseQueued();
+                enableClientPollout(clientFd);
+            }
+        }
+    }
+}
+void Server::removePollFd(int fd)
+{
+    _cgiToClientFd.erase(fd);
+    for(size_t i = 0; i < _fds.size(); i++)
+    {
+        if(_fds[i].fd == fd)
+        {
+            _fds.erase(_fds.begin() + i);
+            break;
+        } 
+    }
+}
+
+bool Server::startCgiForClient(int clientFd, const std::string& scriptPath,
+                                             const std::string& interpreterPath,
+                                             const std::vector<std::string>& envVars,
+                                             const std::string& requestBody)
+{
+    if(_clients.find(clientFd) == _clients.end())
+        return false;
+
+    std::map<int, Client>::iterator it = _clients.find(clientFd);
+    if(it == _clients.end())
+        return false;
+    Client& client = it->second;
+
+    if(client.getCgi() != NULL)
+        return false;    // already there is active cgi client
+
+    CgiHandler* cgi = new CgiHandler();
+    cgi->setInputBuffer(requestBody);
+
+    if(!cgi->startProcess(scriptPath, interpreterPath, envVars))
+    {
+        delete cgi;
+        return false;
+    }
+
+    client.setCgi(cgi);
+
+    if(cgi->getInputFd() != -1)
+    {
+        struct pollfd pfd;
+        pfd.fd = cgi->getInputFd();
+        pfd.events = POLLOUT;
+        pfd.revents = 0;
+        _fds.push_back(pfd);
+        _cgiToClientFd[(cgi->getInputFd())]  = clientFd;
+    }
+
+    if(cgi->getOutputFd() != -1)
+    {
+        struct pollfd pfd;
+        pfd.fd = cgi->getOutputFd();
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        _fds.push_back(pfd);
+        _cgiToClientFd[(cgi->getOutputFd())] = clientFd;
+    }
+    return true;
+}
+
 
 void Server::removeCgi(int clientFd)
 {
-    std::map<int, CgiHandler*>::iterator it =  _activeCgi.find(clientFd);
-    if(it == _activeCgi.end())
+    std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
+    if (clientIt == _clients.end())
         return;
 
-    CgiHandler* cgi = it->second;
-    if(cgi == NULL)
+    Client& client = clientIt->second;
+    CgiHandler* cgi = client.getCgi();
+    if (cgi == NULL)
         return;
-    
-    
+
     int inputfd = cgi->getInputFd();
     int outputfd = cgi->getOutputFd();
 
-    if(inputfd != -1)
+    if (inputfd != -1)
         unregisterCgiFd(inputfd);
-    if(outputfd != -1)
+    if (outputfd != -1)
         unregisterCgiFd(outputfd);
 
     ReapResult res = cgi->reapChild();
-    if(res == REAP_RUNNING)
+    if (res == REAP_RUNNING)
     {
         std::cout << "CGI child still running" << std::endl;
-        if(cgi->isCancelRequested() == false)
+        if (!cgi->isCancelRequested())
         {
-            if(cgi->terminateChild() == false)
+            if (!cgi->terminateChild())
                 perror("SIGTERM failed");
         }
         _pendingReap.push_back(cgi);
-        _activeCgi.erase(it);
-        return;
-        
     }
-    else if(res == REAP_FINISHED)
+    else if (res == REAP_FINISHED)
     {
         std::cout << "CGI child successfully reaped" << std::endl;
         delete cgi;
-        _activeCgi.erase(it);
     }
-    else if(res == REAP_ERROR)
+    else
     {
-        std::cout << "CGI child reap error" << std::endl; 
+        std::cout << "CGI child reap error" << std::endl;
+        delete cgi;
     }
-    
+
+    client.setCgi(NULL);
 }
 
 void Server::run()
@@ -331,89 +490,95 @@ void Server::run()
     while(true)
     {
         int readyFds = poll(&_fds[0], _fds.size(), 100);
-        
+
         if(readyFds == -1)
         {
             if(errno == EINTR)
-            continue;
-            perror("poll");
+                continue;
+            perror("POLL");
             return;
         }
-        
+
         checkPendingCgi();
-        // Number of FDs that existed when poll() returned
+
         size_t monitoredCount = _fds.size();
 
-        for(size_t i = 0; i < monitoredCount; )
+        for(size_t i =0; i < monitoredCount; )
         {
-            bool shouldRemoveClient = false;
-            
-            // pollin meeans socket is ready for a read operation
-            if(_fds[i].revents & POLLIN)
-            {
-                std::cout << "FD " << _fds[i].fd
-                          << " is ready for reading" << std::endl;
+            int currentFd = _fds[i].fd;
+            short revents = _fds[i].revents;
+            bool shouldRemoveCLient = false;
 
-                if(_fds[i].fd == _socket.getFd()) // listening socket
+            // cgi pipe things pollin pollout pollhup pollerr
+            if(_cgiToClientFd.find(currentFd) != _cgiToClientFd.end())
+            {
+                int clientFd = _cgiToClientFd[currentFd];
+                std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
+                CgiHandler* cgi = (clientIt != _clients.end()) ? clientIt->second.getCgi() : NULL;
+            
+                if(cgi == NULL)
                 {
-                    acceptClient();
-                    
+                    removePollFd(currentFd);
+                    --monitoredCount;
+                    continue;
                 }
-                else if(_clients.find(_fds[i].fd) != _clients.end()) // known client
+
+                if((revents & POLLOUT) && currentFd == cgi->getInputFd())
+                {
+                    if(cgi->writeToStdin())
+                    {
+                        removePollFd(currentFd);
+                        --monitoredCount;
+                        continue;
+                    }
+                }
+
+                if((revents & (POLLIN | POLLHUP | POLLERR)) && currentFd == cgi->getOutputFd())
+                {
+                    if(cgi->readFromStdout())
+                    {
+                        removePollFd(currentFd);
+                        --monitoredCount;
+                        continue;
+                    }
+                }
+                ++i;
+                continue;
+            }
+            // new client connections
+            if((revents & POLLIN) && isListeninSocket(currentFd))
+            {
+                acceptClient(currentFd);
+                ++i;
+                continue;
+            }
+
+            //client sockets
+            if(_clients.find(currentFd) != _clients.end())
+            {
+                if(revents & POLLIN)
                 {
                     if(!readClient(i))
-                        shouldRemoveClient = true;
+                        shouldRemoveCLient = true;
                 }
-                else if (_cgiFds.find(_fds[i].fd) != _cgiFds.end()) 
-                {
-                    if(_cgiFds[_fds[i].fd] == CGI_OUTPUT)
-                    {
-                        std::cout << "CGI output ready to read" << std::endl;
-                    }
-                    else
-                    {
-                        std::cout << "Unexpected CGI pipe type" << std::endl;
-                    }
-                }
-                else // unknown fd
-                {
-                    std::cout << "Unknown FD" << std::endl;
-                }
-            }
-            if(_fds[i].revents & POLLOUT)
-            {
-                std::cout << "FD " <<  _fds[i].fd << " is ready to write" << std::endl;
-                
 
-                if(_clients.find(_fds[i].fd) != _clients.end() && !shouldRemoveClient)
+                if((revents & POLLOUT) && !shouldRemoveCLient)
                 {
-                    if(writeClient(i) == false)
-                        shouldRemoveClient = true;
+                    if(!writeClient(i))
+                        shouldRemoveCLient = true;
                 }
-                else if(_cgiFds.find(_fds[i].fd) != _cgiFds.end())
+
+                if((revents & (POLLERR | POLLHUP | POLLNVAL)) && !(revents & POLLIN))
                 {
-                    if(_cgiFds[_fds[i].fd] == CGI_INPUT)
-                        std::cout << "CGI input ready  for writing" << std::endl;
+                    shouldRemoveCLient = true;
                 }
-            }
-            // POLLIN - A read operation can proceed
-            // POLLOUT - writing is now possible
-            // POLLHUP - A hangup has occurred
-            // POLLERR - A socket error occurred
-            // POLLNVAL - THe file descripto is invalid
-            // we inspect revents because multiple flags can appear together
-            // it handles client disconnection and error events
-            if(_clients.find(_fds[i].fd) != _clients.end() && 
-            (_fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) && 
-            !(_fds[i].revents & POLLIN))
-            {
-                shouldRemoveClient = true;
-            }
-            if(shouldRemoveClient)
-            {
-                removeClient(i);
-                --monitoredCount;
-                continue;
+
+                if(shouldRemoveCLient)
+                {
+                    removeClient(i);
+                    --monitoredCount;
+                    continue;
+                }
             }
             ++i;
         }

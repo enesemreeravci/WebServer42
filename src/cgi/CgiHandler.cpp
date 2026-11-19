@@ -1,4 +1,5 @@
 #include "../../include/cgi/CgiHandler.hpp"
+#include "../../include/utils/Utils.hpp"
 
 CgiHandler::CgiHandler()
 {
@@ -6,6 +7,8 @@ CgiHandler::CgiHandler()
     _inputFd = -1;
     _outputFd = -1;
     _cancelRequested = false;
+    _bytesWritten = 0;
+    _startTime = 0;
 }
 
 
@@ -22,6 +25,80 @@ pid_t CgiHandler::getPid() const { return _pid; }
 int CgiHandler::getInputFd() const { return _inputFd; }
 
 int CgiHandler::getOutputFd() const { return _outputFd; }
+
+void CgiHandler::setInputBuffer(const std::string& body)
+{
+    _inputBuffer = body;
+    _bytesWritten = 0;
+}
+
+const std::string& CgiHandler::getOutputBuffer() const
+{
+    return _outputBuffer;
+}
+
+bool CgiHandler::isTimedOut(int timeoutSeconds) const
+{
+    if(_startTime == 0)
+        return false;
+    return (std::time(NULL) - _startTime) >= timeoutSeconds;
+}
+
+bool CgiHandler::writeToStdin()
+{
+    if(_inputFd == -1)
+        return true;
+    
+    if(_bytesWritten >= _inputBuffer.size())
+    {
+        close(_inputFd);
+        _inputFd = -1;
+        return true;
+    }
+
+    ssize_t remaining = _inputBuffer.size() - _bytesWritten;
+    ssize_t written = write(_inputFd, _inputBuffer.c_str() + _bytesWritten, remaining);
+    if(written > 0)
+    {
+        // static_cast used to prevent complie error, later I check wheter it is equal to -1 or not
+        _bytesWritten += static_cast<size_t>(written);
+        if(_bytesWritten >= _inputBuffer.size())
+        {
+            close(_inputFd);
+            _inputFd = -1;
+            return true;
+        }
+        return false;
+    }
+    if((written == -1) && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false;
+    
+    close(_inputFd);
+    _inputFd = -1;
+    return true;
+}
+
+bool CgiHandler::readFromStdout()
+{
+    if(_outputFd == -1)
+        return true;
+    
+    char buffer[4096];
+    ssize_t bytesRead = read(_outputFd, buffer, sizeof(buffer));
+    if(bytesRead > 0)
+    {
+        _outputBuffer.append(buffer, static_cast<size_t>(bytesRead));
+        return false;
+    }
+
+    if((bytesRead == -1) && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false;
+    
+    // eof or read error
+    close(_outputFd);
+    _outputFd = -1;
+    return true;
+}
 
 
 //if pipe calls succeed  we will have 4 new FDs
@@ -98,17 +175,6 @@ bool CgiHandler::isCancelRequested() const
     return false;
 }
 
-bool CgiHandler::setNonBlocking(int fd)
-{
-    int flags = fcntl(fd, F_GETFL); // get flags
-    if(flags == -1)
-        return false;
-    int result = fcntl(fd, F_SETFL, flags | O_NONBLOCK); // old flags + nonblock
-    if(result == -1)
-        return false;
-    return true;
-}
-
 bool CgiHandler::isRunning() const
 {
     if(_pid > 0)
@@ -116,40 +182,34 @@ bool CgiHandler::isRunning() const
     return false;
 }
 
-bool CgiHandler::startProcess(const std::string& executablePath)
+bool CgiHandler::startProcess(const std::string& scriptPath,
+                              const std::string& interpreterPath,
+                              const std::vector<std::string>& envVars)
 {
-    
     int fd1[2];
     int fd2[2];
-    
-    if(createPipes(fd1, fd2) == false)
+
+    if (!createPipes(fd1, fd2))
         return false;
+
     pid_t c_pid = fork();
-    
-    if(c_pid == -1)
+    if (c_pid == -1)
     {
-        perror("Fork");
+        perror("fork");
         close(fd1[0]);
         close(fd1[1]);
-        close(fd2[1]);
         close(fd2[0]);
+        close(fd2[1]);
         return false;
     }
-    else if(c_pid == 0) // child
+    else if (c_pid == 0) // CHILD PROCESS
     {
-        close(fd1[1]); // because child doesnt write to pipe 1
-        close(fd2[0]);  // because child doesnt read from pipe 2
-      
-        if(dup2(fd1[0], STDIN_FILENO) == -1)
+        close(fd1[1]); 
+        close(fd2[0]);
+
+        if (dup2(fd1[0], STDIN_FILENO) == -1 || dup2(fd2[1], STDOUT_FILENO) == -1)
         {
-            perror("dup2 failed");
-            close(fd1[0]);
-            close(fd2[1]);
-            _exit(1);
-        }
-        if(dup2(fd2[1], STDOUT_FILENO) == -1)
-        {
-            perror("dup2 failed");
+            perror("dup2");
             close(fd1[0]);
             close(fd2[1]);
             _exit(1);
@@ -157,37 +217,78 @@ bool CgiHandler::startProcess(const std::string& executablePath)
         close(fd1[0]);
         close(fd2[1]);
 
-        char *argv[] = { const_cast<char*>(executablePath.c_str()), 
-        NULL };
-
-        char *envp[] = { NULL };
-
-        if(execve(executablePath.c_str(), argv, envp) == -1)
+        std::string scriptFile = scriptPath;
+        size_t lastSlash = scriptPath.find_last_of('/');
+        if (lastSlash != std::string::npos)
         {
-            perror("execve");
-            _exit(1);
+            std::string dir = scriptPath.substr(0, lastSlash);
+            scriptFile = scriptPath.substr(lastSlash + 1);
+            if (!dir.empty() && chdir(dir.c_str()) == -1)
+            {
+                perror("chdir");
+                _exit(1);
+            }
         }
 
+        std::vector<char*> envp;
+        for (size_t i = 0; i < envVars.size(); ++i)
+            envp.push_back(const_cast<char*>(envVars[i].c_str()));
+        envp.push_back(NULL);
 
+        std::vector<char*> argv;
+        std::string execTarget;
+        if (!interpreterPath.empty())
+        {
+            execTarget = interpreterPath;
+            argv.push_back(const_cast<char*>(interpreterPath.c_str()));
+            argv.push_back(const_cast<char*>(scriptFile.c_str()));
+        }
+        else
+        {
+            execTarget = scriptFile;
+            argv.push_back(const_cast<char*>(scriptFile.c_str()));
+        }
+        argv.push_back(NULL);
+
+        execve(execTarget.c_str(), &argv[0], &envp[0]);
+        perror("execve");
+        _exit(1);
     }
-    else // parent c_pid > 0 
+    else // PARENT PROCESS
     {
         _pid = c_pid;
-        close(fd1[0]);  // because parent doesnt read from pipe 1
-        close(fd2[1]);  // because parent doesnt write from pipe 2
+        _startTime = std::time(NULL);
+        _bytesWritten = 0;
 
+        close(fd1[0]); 
+        close(fd2[1]); 
 
-        _inputFd = fd1[1]; // parent writes the request body
-        _outputFd = fd2[0]; // parents read cgi output
-        if (!setNonBlocking(_inputFd) || !setNonBlocking(_outputFd))
+        _outputFd = fd2[0];
+        if (!Utils::setNonBlocking(_outputFd))
         {
-            close(_inputFd);
+            close(fd1[1]);
             close(_outputFd);
-            _inputFd = -1;
             _outputFd = -1;
             return false;
         }
-        std::cout << "Printed form [parent] process " << std::endl;
+
+        if (_inputBuffer.empty())
+        {
+            close(fd1[1]);
+            _inputFd = -1;
+        }
+        else
+        {
+            _inputFd = fd1[1];
+            if (!Utils::setNonBlocking(_inputFd))
+            {
+                close(_inputFd);
+                close(_outputFd);
+                _inputFd = -1;
+                _outputFd = -1;
+                return false;
+            }
+        }
     }
     return true;
 }

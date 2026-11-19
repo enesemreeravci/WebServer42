@@ -4,10 +4,14 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <iostream>
-#include <stdio.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <ctime>
+#include <cstdio>
+#include <cerrno>
+#include <iostream>
+#include <string>
+#include <vector>
 
 enum ReapResult
 {
@@ -19,31 +23,41 @@ enum ReapResult
 class CgiHandler
 {
     private:
-        pid_t _pid;  // stores the child process id after a succesfull fork()
-
-        int _inputFd; // parent's write end for sending the htpp request body to the cgi child
-        int _outputFd; // parent's read end for receiving the cgi childs' output
+        pid_t _pid;
+        int _inputFd;
+        int _outputFd;
         bool _cancelRequested;
+
+        std::string _inputBuffer;
+        size_t _bytesWritten;
+        std::string _outputBuffer;
+        time_t _startTime;
+
+        CgiHandler(const CgiHandler& other);
+        CgiHandler& operator=(const CgiHandler& other);
+
     public:
         CgiHandler();
         ~CgiHandler();
 
-        // prevent copying because cgihandler owns file descriptors
-        CgiHandler(const CgiHandler& other);
-        CgiHandler& operator=(const CgiHandler& other);
-
         bool createPipes(int fd1[2], int fd2[2]);
-        bool startProcess(const std::string& executablePath);
+        bool startProcess(const std::string& scriptPath,
+                          const std::string& interpreterPath,
+                          const std::vector<std::string>& envVars);
         ReapResult reapChild();
-        bool setNonBlocking(int fd);
         bool terminateChild();
         bool isRunning() const;
         bool isCancelRequested() const;
-        // getters
+        bool writeToStdin();
+        bool readFromStdout();
+
+        // getters and setters
         pid_t getPid() const;
         int getInputFd() const;
         int getOutputFd() const;
-
+        void setInputBuffer(const std::string& body);
+        const std::string& getOutputBuffer() const;
+        bool isTimedOut(int timeoutSeconds) const;
 };
 
 #endif

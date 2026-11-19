@@ -4,9 +4,13 @@
 #include <string>
 #include <cstddef>
 
+
+class CgiHandler;
+
 class Client
 {
     private:
+        CgiHandler* _cgi;
         int _fd; // connected socket descriptor
         std::string _inputBuffer; // stores recevied request bytes
         std::string _outputBuffer; // stores  response bytes waiting to be sent
@@ -21,12 +25,15 @@ class Client
         void advanceSent(size_t bytes);
 
         int getClientFd() const;
+        CgiHandler* getCgi() const;
+        void setCgi(CgiHandler* cgi);
         const std::string& getOutputBuffer() const;
         size_t getBytesSent() const;
         bool hasPendingOutput() const;
         const std::string& getInputBuffer() const;
         bool isResponseQueued() const;
         void markResponseQueued();
+        void reset();
 };
 
 #endif

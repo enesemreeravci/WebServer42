@@ -1,6 +1,6 @@
 #include "../../include/network/Client.hpp"
 
-Client::Client(int fd) : _fd(fd), _bytesSent(0), _responseQueued(false) {}
+Client::Client(int fd) : _cgi(NULL), _fd(fd), _bytesSent(0), _responseQueued(false) {}
 
 Client::~Client()
 {
@@ -8,6 +8,16 @@ Client::~Client()
 }
 
 int Client::getClientFd() const { return _fd; }
+
+CgiHandler* Client::getCgi() const
+{
+    return _cgi;
+}
+
+void Client::setCgi(CgiHandler* cgi)
+{
+    _cgi = cgi;
+}
 
 const std::string& Client::getOutputBuffer() const { return _outputBuffer; }
 
@@ -50,4 +60,12 @@ void Client::setOutput(const std::string &response)
 void Client::advanceSent(size_t bytes)
 {
     _bytesSent += bytes;
+}
+
+void Client::reset()
+{
+    _inputBuffer.clear();
+    _outputBuffer.clear();
+    _bytesSent = 0;
+    _responseQueued = false;
 }

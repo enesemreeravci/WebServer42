@@ -1,5 +1,5 @@
-#ifndef SOCKET_HPP
-#define SOCKET_HPP
+#ifndef UTILS_HPP
+#define UTILS_HPP
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -12,18 +12,11 @@
 #include <poll.h>
 #include <vector>
 
-class Socket
+namespace Utils
 {
-    private:
-        int _fd;
-    
-    public:
-        Socket();
-        ~Socket();
+    bool setNonBlocking(int fd);
 
-        bool initializeSocket(int port);
-        int getFd() const;
-};
-
+    // add other helper here for http and configs and routers
+}
 
 #endif
