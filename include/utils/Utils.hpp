@@ -6,15 +6,21 @@
 #include <iostream>
 #include <unistd.h>
 #include <cstdio>
-#include <netinet/in.h>
 #include <cstring>
 #include <fcntl.h>
-#include <poll.h>
 #include <vector>
+#include <string>
+#include <sstream>
+
 
 namespace Utils
 {
     bool setNonBlocking(int fd);
+
+    void closeFd(int& fd); 
+
+    std::string extractDirectory(const std::string& path);
+    std::string extractFilename(const std::string& path);
 
     // add other helper here for http and configs and routers
 }

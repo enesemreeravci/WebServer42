@@ -14,10 +14,9 @@ CgiHandler::CgiHandler()
 
 CgiHandler::~CgiHandler()
 {
-    if(_inputFd != -1)
-        close(_inputFd);
-    if(_outputFd != -1)
-        close(_outputFd);
+
+    Utils::closeFd(_inputFd);
+    Utils::closeFd(_outputFd);
 }
 
 pid_t CgiHandler::getPid() const { return _pid; }
@@ -51,8 +50,7 @@ bool CgiHandler::writeToStdin()
     
     if(_bytesWritten >= _inputBuffer.size())
     {
-        close(_inputFd);
-        _inputFd = -1;
+        Utils::closeFd(_inputFd);
         return true;
     }
 
@@ -64,8 +62,7 @@ bool CgiHandler::writeToStdin()
         _bytesWritten += static_cast<size_t>(written);
         if(_bytesWritten >= _inputBuffer.size())
         {
-            close(_inputFd);
-            _inputFd = -1;
+            Utils::closeFd(_inputFd);
             return true;
         }
         return false;
@@ -73,8 +70,7 @@ bool CgiHandler::writeToStdin()
     if((written == -1) && (errno == EAGAIN || errno == EWOULDBLOCK))
         return false;
     
-    close(_inputFd);
-    _inputFd = -1;
+    Utils::closeFd(_inputFd);
     return true;
 }
 
@@ -95,8 +91,7 @@ bool CgiHandler::readFromStdout()
         return false;
     
     // eof or read error
-    close(_outputFd);
-    _outputFd = -1;
+    Utils::closeFd(_outputFd);
     return true;
 }
 
@@ -196,15 +191,15 @@ bool CgiHandler::startProcess(const std::string& scriptPath,
     if (c_pid == -1)
     {
         perror("fork");
-        close(fd1[0]);
-        close(fd1[1]);
-        close(fd2[0]);
-        close(fd2[1]);
+        Utils::closeFd(fd1[0]);
+        Utils::closeFd(fd1[1]);
+        Utils::closeFd(fd2[0]);
+        Utils::closeFd(fd2[1]);
         return false;
     }
     else if (c_pid == 0) // CHILD PROCESS
     {
-        close(fd1[1]); 
+        close(fd1[1]);
         close(fd2[0]);
 
         if (dup2(fd1[0], STDIN_FILENO) == -1 || dup2(fd2[1], STDOUT_FILENO) == -1)
@@ -217,17 +212,12 @@ bool CgiHandler::startProcess(const std::string& scriptPath,
         close(fd1[0]);
         close(fd2[1]);
 
-        std::string scriptFile = scriptPath;
-        size_t lastSlash = scriptPath.find_last_of('/');
-        if (lastSlash != std::string::npos)
+        std::string dir = Utils::extractDirectory(scriptPath);
+        std::string scriptFile = Utils::extractFilename(scriptPath);
+        if (!dir.empty() && chdir(dir.c_str()) == -1)
         {
-            std::string dir = scriptPath.substr(0, lastSlash);
-            scriptFile = scriptPath.substr(lastSlash + 1);
-            if (!dir.empty() && chdir(dir.c_str()) == -1)
-            {
-                perror("chdir");
-                _exit(1);
-            }
+            perror("chdir");
+            _exit(1);
         }
 
         std::vector<char*> envp;
@@ -260,15 +250,14 @@ bool CgiHandler::startProcess(const std::string& scriptPath,
         _startTime = std::time(NULL);
         _bytesWritten = 0;
 
-        close(fd1[0]); 
-        close(fd2[1]); 
+        close(fd1[0]);
+        close(fd2[1]);
 
         _outputFd = fd2[0];
         if (!Utils::setNonBlocking(_outputFd))
         {
             close(fd1[1]);
-            close(_outputFd);
-            _outputFd = -1;
+            Utils::closeFd(_outputFd);
             return false;
         }
 
@@ -282,10 +271,8 @@ bool CgiHandler::startProcess(const std::string& scriptPath,
             _inputFd = fd1[1];
             if (!Utils::setNonBlocking(_inputFd))
             {
-                close(_inputFd);
-                close(_outputFd);
-                _inputFd = -1;
-                _outputFd = -1;
+                Utils::closeFd(_inputFd);
+                Utils::closeFd(_outputFd);
                 return false;
             }
         }

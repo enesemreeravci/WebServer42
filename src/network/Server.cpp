@@ -180,22 +180,18 @@ bool Server::readClient(size_t index)
 
 void Server::removeClient(size_t index)
 {
-    int client_fd = _fds[index].fd; 
-    std::cout << "Server closing client FD: " << client_fd << std::endl;
+    int client_fd = _fds[index].fd;
+    std::cout << "Server closing client Fd: " << client_fd << std::endl;
 
-    removeCgi(client_fd); // it will remove cgi client
-    _clients.erase(client_fd);      // removes the client's stored data and state
-    close(_fds[index].fd); // relases the os's socker descriptor
-    
-    for(size_t i = 0; i < _fds.size(); ++i)
+    std::map<int, Client>::iterator it = _clients.find(client_fd);
+
+    if(it != _clients.end())
     {
-        if(_fds[i].fd == client_fd)
-        {
-            _fds.erase(_fds.begin() + i); // stops our event loop from monitoring that FD
-            break;
-        }    
-
+        cleanupClientCgi(it->second, true);
+        _clients.erase(it);
     }
+    removePollFd(client_fd);
+    close(client_fd);
 }
 
 bool Server::queueResponse(size_t index, const std::string& response)
@@ -269,35 +265,20 @@ bool Server::writeClient(size_t index)
 
 // add a cgi fd to both type and _fds
 // so the event loop knows its type and can monitor it
-void Server::registerCgiFd(int fd, int clientFd, bool isInput)
+
+void Server::registerCgiPipe(int pipeFd, int clientFd, short events)
 {
-    _cgiToClientFd[fd] = clientFd;
+    if(pipeFd == -1)
+        return;
 
-    struct pollfd cgi;
-    cgi.fd = fd;
-    if(isInput)
-        cgi.events = POLLOUT;
-    else 
-        cgi.events = POLLIN;
-    cgi.revents = 0;
+    struct pollfd pfd;
+    pfd.fd = pipeFd;
+    pfd.events = events;
+    pfd.revents = 0;
 
-    _fds.push_back(cgi);
-}
+    _fds.push_back(pfd);
 
-void Server::unregisterCgiFd(int fd)
-{
-    _cgiToClientFd.erase(fd);
-
-    std::vector<struct pollfd>::iterator it = _fds.begin();
-    while(it != _fds.end())
-    {
-        if(it->fd == fd)
-        {
-            _fds.erase(it);
-            break;
-        }
-        it++;
-    }
+    _cgiToClientFd[pipeFd] = clientFd;
 }
 
 void Server::enableClientPollout(int clientFd)
@@ -326,14 +307,7 @@ void Server::checkPendingCgi()
         
         if(cgi->isTimedOut(10)) // timeout check, 10 sec
         {
-            if(cgi->getInputFd() != -1)
-                removePollFd(cgi->getInputFd());
-            if(cgi->getOutputFd() != -1)
-                removePollFd(cgi->getOutputFd());
-            
-            cgi->terminateChild();
-            delete cgi;
-            client.setCgi(NULL);
+            cleanupClientCgi(client, true);
 
             std::string timeoutReap = 
                 "HTTP/1.1 504 Gateway Timeout\r\n"
@@ -353,9 +327,8 @@ void Server::checkPendingCgi()
             ReapResult status = cgi->reapChild();
             if(status == REAP_FINISHED || status == REAP_ERROR)
             {
-                std::string cgiOutput = cgi->getOutputBuffer();
-                delete cgi;
-                client.setCgi(NULL);
+                std::string cgiOutput = cgi->getOutputBuffer(); // copy the ouput
+                cleanupClientCgi(client, false); // clean and termiante it
 
                 std::string response;
                 if(status == REAP_ERROR)
@@ -391,13 +364,101 @@ void Server::removePollFd(int fd)
     }
 }
 
+void Server::cleanupClientCgi(Client& client, bool terminate)
+{
+    CgiHandler* cgi = client.getCgi();
+
+    if(cgi == NULL)
+        return;
+
+    if(cgi->getInputFd() != -1)
+        removePollFd(cgi->getInputFd());
+    if(cgi->getOutputFd() != -1)
+        removePollFd(cgi->getOutputFd());
+
+    if(terminate)
+        cgi->terminateChild();
+    delete cgi;
+    client.setCgi(NULL);
+    
+}
+
+bool Server::HandleCgiPipeEvent(size_t index, size_t& monitoredCount)
+{
+    int currentFd = _fds[index].fd;
+    short revents = _fds[index].revents;
+
+    int clientFd = _cgiToClientFd[currentFd];
+    std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
+    CgiHandler* cgi = (clientIt != _clients.end()) ? clientIt->second.getCgi() : NULL;
+
+    if (cgi == NULL)
+    {
+        removePollFd(currentFd);
+        --monitoredCount;
+        return true;
+    }
+
+    if ((revents & POLLOUT) && currentFd == cgi->getInputFd())
+    {
+        if (cgi->writeToStdin())
+        {
+            removePollFd(currentFd);
+            --monitoredCount;
+            return true;
+        }
+    }
+
+    if ((revents & (POLLIN | POLLHUP | POLLERR)) && currentFd == cgi->getOutputFd())
+    {
+        if (cgi->readFromStdout())
+        {
+            removePollFd(currentFd);
+            --monitoredCount;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Server::HandleClientEvent(size_t index, size_t& monitoredCount)
+{
+    short revents = _fds[index].revents;
+    bool shouldRemoveClient = false;
+
+    if (revents & POLLIN)
+    {
+        if (!readClient(index))
+            shouldRemoveClient = true;
+    }
+
+    if ((revents & POLLOUT) && !shouldRemoveClient)
+    {
+        if (!writeClient(index))
+            shouldRemoveClient = true;
+    }
+
+    if ((revents & (POLLERR | POLLHUP | POLLNVAL)) && !(revents & POLLIN))
+    {
+        shouldRemoveClient = true;
+    }
+
+    if (shouldRemoveClient)
+    {
+        removeClient(index);
+        --monitoredCount;
+        return true;
+    }
+
+    return false;
+}
+
 bool Server::startCgiForClient(int clientFd, const std::string& scriptPath,
                                              const std::string& interpreterPath,
                                              const std::vector<std::string>& envVars,
                                              const std::string& requestBody)
 {
-    if(_clients.find(clientFd) == _clients.end())
-        return false;
 
     std::map<int, Client>::iterator it = _clients.find(clientFd);
     if(it == _clients.end())
@@ -418,82 +479,21 @@ bool Server::startCgiForClient(int clientFd, const std::string& scriptPath,
 
     client.setCgi(cgi);
 
-    if(cgi->getInputFd() != -1)
-    {
-        struct pollfd pfd;
-        pfd.fd = cgi->getInputFd();
-        pfd.events = POLLOUT;
-        pfd.revents = 0;
-        _fds.push_back(pfd);
-        _cgiToClientFd[(cgi->getInputFd())]  = clientFd;
-    }
-
-    if(cgi->getOutputFd() != -1)
-    {
-        struct pollfd pfd;
-        pfd.fd = cgi->getOutputFd();
-        pfd.events = POLLIN;
-        pfd.revents = 0;
-        _fds.push_back(pfd);
-        _cgiToClientFd[(cgi->getOutputFd())] = clientFd;
-    }
+    registerCgiPipe(cgi->getInputFd(), clientFd, POLLOUT);
+    registerCgiPipe(cgi->getOutputFd(), clientFd, POLLIN);
     return true;
 }
 
 
-void Server::removeCgi(int clientFd)
-{
-    std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
-    if (clientIt == _clients.end())
-        return;
-
-    Client& client = clientIt->second;
-    CgiHandler* cgi = client.getCgi();
-    if (cgi == NULL)
-        return;
-
-    int inputfd = cgi->getInputFd();
-    int outputfd = cgi->getOutputFd();
-
-    if (inputfd != -1)
-        unregisterCgiFd(inputfd);
-    if (outputfd != -1)
-        unregisterCgiFd(outputfd);
-
-    ReapResult res = cgi->reapChild();
-    if (res == REAP_RUNNING)
-    {
-        std::cout << "CGI child still running" << std::endl;
-        if (!cgi->isCancelRequested())
-        {
-            if (!cgi->terminateChild())
-                perror("SIGTERM failed");
-        }
-        _pendingReap.push_back(cgi);
-    }
-    else if (res == REAP_FINISHED)
-    {
-        std::cout << "CGI child successfully reaped" << std::endl;
-        delete cgi;
-    }
-    else
-    {
-        std::cout << "CGI child reap error" << std::endl;
-        delete cgi;
-    }
-
-    client.setCgi(NULL);
-}
-
 void Server::run()
 {
-    while(true)
+    while (true)
     {
         int readyFds = poll(&_fds[0], _fds.size(), 100);
 
-        if(readyFds == -1)
+        if (readyFds == -1)
         {
-            if(errno == EINTR)
+            if (errno == EINTR)
                 continue;
             perror("POLL");
             return;
@@ -503,82 +503,23 @@ void Server::run()
 
         size_t monitoredCount = _fds.size();
 
-        for(size_t i =0; i < monitoredCount; )
+        for (size_t i = 0; i < monitoredCount; )
         {
             int currentFd = _fds[i].fd;
-            short revents = _fds[i].revents;
-            bool shouldRemoveCLient = false;
 
-            // cgi pipe things pollin pollout pollhup pollerr
-            if(_cgiToClientFd.find(currentFd) != _cgiToClientFd.end())
+            if (_cgiToClientFd.find(currentFd) != _cgiToClientFd.end())
             {
-                int clientFd = _cgiToClientFd[currentFd];
-                std::map<int, Client>::iterator clientIt = _clients.find(clientFd);
-                CgiHandler* cgi = (clientIt != _clients.end()) ? clientIt->second.getCgi() : NULL;
-            
-                if(cgi == NULL)
-                {
-                    removePollFd(currentFd);
-                    --monitoredCount;
+                if (HandleCgiPipeEvent(i, monitoredCount))
                     continue;
-                }
-
-                if((revents & POLLOUT) && currentFd == cgi->getInputFd())
-                {
-                    if(cgi->writeToStdin())
-                    {
-                        removePollFd(currentFd);
-                        --monitoredCount;
-                        continue;
-                    }
-                }
-
-                if((revents & (POLLIN | POLLHUP | POLLERR)) && currentFd == cgi->getOutputFd())
-                {
-                    if(cgi->readFromStdout())
-                    {
-                        removePollFd(currentFd);
-                        --monitoredCount;
-                        continue;
-                    }
-                }
-                ++i;
-                continue;
             }
-            // new client connections
-            if((revents & POLLIN) && isListeninSocket(currentFd))
+            else if ((_fds[i].revents & POLLIN) && isListeninSocket(currentFd))
             {
                 acceptClient(currentFd);
-                ++i;
-                continue;
             }
-
-            //client sockets
-            if(_clients.find(currentFd) != _clients.end())
+            else if (_clients.find(currentFd) != _clients.end())
             {
-                if(revents & POLLIN)
-                {
-                    if(!readClient(i))
-                        shouldRemoveCLient = true;
-                }
-
-                if((revents & POLLOUT) && !shouldRemoveCLient)
-                {
-                    if(!writeClient(i))
-                        shouldRemoveCLient = true;
-                }
-
-                if((revents & (POLLERR | POLLHUP | POLLNVAL)) && !(revents & POLLIN))
-                {
-                    shouldRemoveCLient = true;
-                }
-
-                if(shouldRemoveCLient)
-                {
-                    removeClient(i);
-                    --monitoredCount;
+                if (HandleClientEvent(i, monitoredCount))
                     continue;
-                }
             }
             ++i;
         }

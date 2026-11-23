@@ -40,21 +40,24 @@ class Server
         bool writeClient(size_t index);
         bool queueResponse(size_t index, const std::string& response);
 
-        void registerCgiFd(int pipeFd, int clientFd, bool isInput);
-        void unregisterCgiFd(int fd);
         void checkPendingCgi();
-        void removeCgi(int clientFd);
+
+        void removePollFd(int fd);
         void enableClientPollout(int clientFd);
 
         bool isListeninSocket(int fd) const;
-
-        void removePollFd(int fd);
         bool startCgiForClient(int clientFd, const std::string& scriptPath,
                                              const std::string& interpreterPath,
                                              const std::vector<std::string>& envVars,
                                              const std::string& requestBody);
 
+        void registerCgiPipe(int pipeFd, int clientFd, short events);
 
+        void cleanupClientCgi(Client& client, bool terminate);
+        
+        bool HandleCgiPipeEvent(size_t index, size_t& monitoredCount);
+        bool HandleClientEvent(size_t index, size_t& monitoredCount);
+    
     public:
         Server();
         ~Server();
